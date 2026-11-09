@@ -31,6 +31,11 @@ LEFT_CAMERA_MARGIN = 250  # 左へ移動した際にカメラが追い始める�
 ENEMY_SPAWN_INTERVAL = 5000  # ミリ秒
 ENEMIES_PER_WAVE = (1, 3)
 MAX_ENEMIES = 9
+BOSS_APPEAR =4000
+BOSS_SIZE = (160, 160)
+BOSS_HP = 10
+BOSS_BULLET_SPEED = 8
+BOSS_SHOOT_INTERVAL = 75
 
 # 画像ファイルの参照先を、このPythonファイルのあるフォルダに固定する
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -344,11 +349,13 @@ class EnemyBullet(pg.sprite.Sprite):
     敵が発射する弾
     """
 
-    def __init__(self, enemy: "Enemy", player: Player) -> None:
+    def __init__(self, enemy: "Enemy", player: Player, 
+                 speed: int = 6, size: int = 20) -> None:
         super().__init__()
 
-        self.image = pg.Surface((20, 20), pg.SRCALPHA)
-        pg.draw.circle(self.image, (255, 60, 60), (10, 10), 10)
+        self.image = pg.Surface((size, size), pg.SRCALPHA)
+        pg.draw.circle(self.image, (255, 60, 60), 
+                       (size // 2, size // 2), size // 2)
 
         self.rect = self.image.get_rect(
             center=enemy.get_rect().center
@@ -360,7 +367,7 @@ class EnemyBullet(pg.sprite.Sprite):
 
         self.x = float(self.rect.x)
         self.y = float(self.rect.y)
-        self.speed = 6
+        self.speed = speed # 弾速を外部から指定できる
 
 
     # 外部のクラス・共通関数から参照する際のgetter
@@ -474,6 +481,109 @@ class Enemy(pg.sprite.Sprite):
 
 
 
+class Boss(pg.sprite.Sprite):
+    """
+    ボスエネミー
+    """
+
+    def __init__(self, x: int, y: int) -> None:
+        super().__init__()
+
+        self.image = pg.transform.scale(pg.image.load("fig/devil.png").convert_alpha(),BOSS_SIZE)
+
+        self.rect = self.image.get_rect(center=(x, y))
+
+        # HP
+        self.hp = BOSS_HP
+
+        # 移動
+        self.speed_y = 3
+        self.direction_y = 1
+        self.original_y = y
+
+        # 攻撃
+        self.shoot_timer = BOSS_SHOOT_INTERVAL
+
+        # 回避
+        self.dodge_timer = 0
+
+    def get_image(self) -> pg.Surface:
+        return self.image
+
+    def get_rect(self) -> pg.Rect:
+        return self.rect
+
+    def get_hp(self) -> int:
+        return self.hp
+
+    def take_damage(self) -> None:
+        """攻撃を受けたときHPを減らす"""
+        self.hp -= 1
+
+    def can_shoot(self) -> bool:
+        return self.shoot_timer <= 0
+
+    def reset_shoot_timer(self) -> None:
+        self.shoot_timer = BOSS_SHOOT_INTERVAL
+
+    def update(self, player_bullets: pg.sprite.Group) -> None:
+        """上下移動とプレイヤーの弾の回避"""
+
+        self.shoot_timer -= 1
+
+        dodging = False
+
+        for bullet in player_bullets:
+            dx = abs(bullet.rect.centerx - self.rect.centerx)
+            dy = abs(bullet.rect.centery - self.rect.centery)
+
+            if dx < 180 and dy < 100:
+                dodging = True
+                break
+
+        if dodging:
+            self.dodge_timer = 25
+
+        # 通常移動
+        move_speed = self.speed_y
+
+        # 回避中は移動速度を3倍にする
+        if self.dodge_timer > 0:
+            move_speed *= 3
+            self.dodge_timer -= 1
+
+        self.rect.y += move_speed * self.direction_y
+
+        # 上下の移動範囲
+        if self.rect.top < 100:
+            self.rect.top = 100
+            self.direction_y = 1
+
+        if self.rect.bottom > GROUND_Y - 20:
+            self.rect.bottom = GROUND_Y - 20
+            self.direction_y = -1
+
+    def draw_hp(self, screen: pg.Surface) -> None:
+        """ボスのHPゲージを描画"""
+
+        bar_width = 400
+        bar_height = 22
+
+        x = WIDTH // 2 - bar_width // 2
+        y = 25
+
+        # 背景
+        pg.draw.rect(screen,(50, 50, 50),(x, y, bar_width, bar_height))
+
+        # 残りHP
+        hp_width = int(bar_width * self.hp / BOSS_HP)
+        pg.draw.rect(screen,(220, 30, 40),(x, y, hp_width, bar_height))
+
+        # 枠
+        pg.draw.rect(screen,(255, 255, 255),(x, y, bar_width, bar_height),2)
+
+
+
 # ============================================================
 # 8. 描画：ワールド座標からカメラ位置を引いて画面へ表示
 # ============================================================
@@ -534,6 +644,24 @@ def show_game_over(screen: pg.Surface, clock: pg.time.Clock) -> None:
     font = pg.font.Font(None, 100)
     text = font.render("GAME OVER", True, (255, 255, 255))
     screen.blit(text, text.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+    pg.display.update()
+
+    start = pg.time.get_ticks()
+    while pg.time.get_ticks() - start < GAME_OVER_DURATION:
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                return
+        clock.tick(FPS)
+
+def show_game_clear(screen: pg.Surface,clock: pg.time.Clock) -> None:
+
+    overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
+
+    font = pg.font.Font(None, 110)
+    text = font.render("GAME CLEAR",True,(255, 230, 50))
+    screen.blit(text,text.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
     pg.display.update()
 
     start = pg.time.get_ticks()
@@ -639,6 +767,11 @@ def main() -> int:
     enemies = pg.sprite.Group()
     player_bullets = pg.sprite.Group()
     enemy_bullets = pg.sprite.Group()
+    #ボス
+    boss_group = pg.sprite.Group()
+    boss = None
+    boss_spawned = False
+    game_clear = False
 
     # カメラは右方向に無限追従し、左へは少し戻れる
     camera_x = 0
@@ -680,6 +813,11 @@ def main() -> int:
 
         # カメラより左へはみ出さないようにする
         player.clamp_to_camera(camera_x)
+        # ボスの出現判定
+        if (not boss_spawned and player.get_rect().centerx >= BOSS_APPEAR):
+            boss = Boss(player.get_rect().centerx + 300,280)
+            boss_group.add(boss)
+            boss_spawned = True                  
         next_platform_x, last_was_low = generate_platforms(platforms, next_platform_x, camera_x, last_was_low)
 
         # (3) 敵の生成：5秒ごとに1〜3体を予約し、それぞれ時間差で1体ずつ生成
@@ -708,16 +846,38 @@ def main() -> int:
                     enemy_bullets.add(EnemyBullet(enemy, player))
                 enemy.reset_shoot_timer()
 
+        # ボスの移動と攻撃
+        if boss is not None and boss.hp > 0:
+        # 回避行動
+            boss.update(player_bullets)
+        # ボスの射撃
+            if boss.can_shoot():
+                enemy_bullets.add(
+                    EnemyBullet(boss,player,speed=BOSS_BULLET_SPEED, size=40))
+                boss.reset_shoot_timer()
+
         # (6) 弾の移動と当たり判定：弾同士は相殺、敵は一撃で倒す
         player_bullets.update()
         enemy_bullets.update()
         pg.sprite.groupcollide(player_bullets, enemy_bullets, True, True)
         pg.sprite.groupcollide(enemies, player_bullets, True, True)
+        # ボスへの攻撃判定
+        if boss is not None and boss.hp > 0:
+
+            hits = pg.sprite.spritecollide(boss,player_bullets,True)
+            for bullet in hits:
+                boss.take_damage()
+            # ボス撃破
+            if boss.hp <= 0:
+                boss.kill()
+                game_clear = True
 
         # (7) プレイヤー被弾：ライフ制なし、1回でゲームオーバー
         hit_by_bullet = bool(pg.sprite.spritecollide(player, enemy_bullets, True))
         hit_by_enemy = pg.sprite.spritecollideany(player, enemies) is not None
-        game_over = hit_by_bullet or hit_by_enemy
+        # ボスとの接触
+        hit_by_boss = (boss is not None and boss.hp > 0 and pg.sprite.collide_rect(player, boss))
+        game_over = hit_by_bullet or hit_by_enemy or hit_by_boss
 
         # (8) 古いオブジェクトの削除と画面描画
         cleanup_world(platforms, enemies, player_bullets, enemy_bullets, camera_x)
@@ -726,9 +886,19 @@ def main() -> int:
         draw_sprites(screen, enemies, camera_x)
         draw_sprites(screen, player_bullets, camera_x)
         draw_sprites(screen, enemy_bullets, camera_x)
+        # ボスの描画
+        if boss is not None and boss.hp > 0:
+            screen.blit(boss.get_image(),boss.get_rect().move(-camera_x, 0))
+            # HPゲージ
+            boss.draw_hp(screen)
         pg.display.update()
         # (9) 被弾した場合はGAME OVERを表示して終了
-        if game_over:
+        # ゲームクリア
+        if game_clear:
+            show_game_clear(screen, clock)
+            running = False
+        # ゲームオーバー
+        elif game_over:
             show_game_over(screen, clock)
             running = False
         clock.tick(FPS)
